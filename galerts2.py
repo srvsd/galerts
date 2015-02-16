@@ -26,7 +26,7 @@
 import re
 import json
 import urllib2
-import datetime
+from datetime import datetime
 from BeautifulSoup import BeautifulSoup
 from getpass import getpass
 from urllib import urlencode
@@ -95,6 +95,11 @@ Frequencies.OnceADay    = Frequencies.add(2, "At most once a day")
 Frequencies.OnceAWeek   = Frequencies.add(3, "At most once a week")
 #########################################################
 
+# For now, only the google.com endpoint is supported
+_REGION = 'US'
+_REGION_DOMAIN = 'com'
+_GOOGLE_DOMAIN = 'google.' + _REGION_DOMAIN
+
 class SignInError(Exception):
     """
     Raised when Google sign in fails.
@@ -143,9 +148,9 @@ class Alert:
         self.region     = query_info[3][2]
 
         if source_info is not None:
-            self.source = source_info[0]
+            self.sources = source_info
         else:
-            self.source = Sources.Automatic
+            self.sources = [ Sources.Automatic ]
             
         self.volume = volume_info
 
@@ -162,11 +167,11 @@ class Alert:
 
         if self.delivery == DeliveryTypes.Feed:
             self.feed_id = delivery_info[11]
-            self.feed_url = 'https://www.' + __GOOGLE_DOMAIN + '/alerts/feeds/' + self.account_id + '/' + self.feed_id
+            self.feed_url = 'https://www.' + _GOOGLE_DOMAIN + '/alerts/feeds/' + self.account_id + '/' + self.feed_id
 
     def __str__(self):
-        return '<Alert id: %s, query: %s, volume: %s, frequency: %s, delivery: %s, email: %s, feed: %s>' %
-            (self.alert_id, self.query, Volumes.getName(self.volume), Frequencies.getName(self.frequency),
+        return '<Alert id: {}, query: {}, volume: {}, frequency: {}, delivery: {}, email: {}, feed: {}>'.format(
+            self.alert_id, self.query, Volumes.getName(self.volume), Frequencies.getName(self.frequency),
             DeliveryTypes.getName(self.delivery), self.email, self.feed_url)
 
 class WindowState:
@@ -194,6 +199,8 @@ class WindowState:
         accounts_data = window_state[2]
         accounts_list = accounts_data[6]
 
+        self.accounts = {}
+
         for account_data in accounts_list:
             account = Account(account_data)
             self.accounts[account.email] = account
@@ -213,11 +220,6 @@ class GoogleAlertsManager(object):
     instantiated with when creating new email alerts or changing feed alerts
     to email alerts.
     """
-
-    # For now, only the google.com endpoint is supported
-    __REGION = 'US'
-    __REGION_DOMAIN = '.com'
-    __GOOGLE_DOMAIN = 'google' + __REGION_DOMAIN
 
     def __init__(self, email, password):
         """
@@ -246,8 +248,8 @@ class GoogleAlertsManager(object):
         """
         Obtains a cookie from Google for an authenticated session.
         """
-        login_page_url   = 'https://accounts.' + __GOOGLE_DOMAIN + '/ServiceLogin'
-        authenticate_url = 'https://accounts.' + __GOOGLE_DOMAIN + '/ServiceLoginAuth'
+        login_page_url   = 'https://accounts.' + _GOOGLE_DOMAIN + '/ServiceLogin'
+        authenticate_url = 'https://accounts.' + _GOOGLE_DOMAIN + '/ServiceLoginAuth'
 
         # Load login page
         login_page_contents = self.opener.open(login_page_url).read()
@@ -265,7 +267,7 @@ class GoogleAlertsManager(object):
             'Email': self.email,
             'Passwd': password,
             'service': 'alerts',
-            'continue': 'https://www.' + __GOOGLE_DOMAIN + '/alerts?hl=en&gl=us',
+            'continue': 'https://www.' + _GOOGLE_DOMAIN + '/alerts?hl=en&gl=us',
             'GALX': galx_value,
             })
         response = self.opener.open(authenticate_url, params)
@@ -293,7 +295,7 @@ class GoogleAlertsManager(object):
         Returns: The parsed value of window.STATE
         """
 
-        alerts_url = 'https://www.' + __GOOGLE_DOMAIN + '/alerts?hl=en&gl=us'
+        alerts_url = 'https://www.' + _GOOGLE_DOMAIN + '/alerts?hl=en&gl=us'
         response = self.opener.open(alerts_url)
         resp_code = response.getcode()
         body = response.read()
@@ -322,9 +324,10 @@ class GoogleAlertsManager(object):
         """
         Return a list of :class:`ArrayState` objects which contain information about all the alerts.
         """
+        self._refresh_window_state()
         return self.window_state.alerts[:]
 
-    def _create_alert_data(self, query, source, delivery, freq, vol, lang='en', region=None):
+    def _create_alert_data(self, query, sources, delivery, freq, vol, lang='en', region=None):
         """
         Create data for a single alert which is used for API calls
         """
@@ -332,31 +335,27 @@ class GoogleAlertsManager(object):
         if freq != Frequencies.AsItHappens:
             utcnow = datetime.utcnow()
 
-            delivery_block = [ None, None, utcnow.hour ] # TODO verify the range of hour that Google Alerts takes
+            delivery_block = [ None, None, utcnow.hour ]
 
             if freq == Frequencies.OnceAWeek:
-                delivery_block += [ utcnow.day - 1 ] # TODO verify the range of day
-
-
-        # The last part of the google domain. This is 'com' for google.com, 'co.in' for google.co.in etc.
-        region_domain = 'com'
+                delivery_block += [ (utcnow.weekday()+1)%7 ] # weekday() sets Monday as 0, but Google Alerts want Sunday as 0
 
         alert_data = [
                 None, None, None,
                 [
                     None,
                     query,
-                    __REGION_DOMAIN,
+                    _REGION_DOMAIN,
                     [
                         None,
                         lang,
-                        region if region is not None else __REGION
+                        region if region is not None else _REGION
                     ],
                     None, None, None,
                     0 if region is None else 1, # Denotes whether the region is 'Any region'
                     1  #FIXME unknown
                 ],
-                [ source ] if source != Sources.Automatic else None,
+                sources,
                 vol,
                 [
                     [
@@ -376,7 +375,7 @@ class GoogleAlertsManager(object):
 
         return alert_data
 
-    def create(self, query, source=Sources.Automatic, delivery=DeliveryTypes.Feed, freq=Frequencies.OnceADay, vol=Volumes.BestResults, lang='en', region=None):
+    def create(self, query, sources=None, delivery=DeliveryTypes.Feed, freq=None, vol=Volumes.BestResults, lang='en', region=None):
         #TODO fix doc
         """
         Creates a new alert.
@@ -391,13 +390,23 @@ class GoogleAlertsManager(object):
             to be delivered. Defaults to :attr:`VOL_ONLY_BEST`.
         """
 
-        url = 'https://www.' + __GOOGLE_DOMAIN + '/alerts/create?x=' + self.window_state.x
+        url = 'https://www.' + _GOOGLE_DOMAIN + '/alerts/create?x=' + self.window_state.x
+
+        if delivery == DeliveryTypes.Feed:
+            if freq is None:
+                freq = Frequencies.AsItHappens
+
+            if freq != Frequencies.AsItHappens:
+                raise ValueError('Frequency for a feed can can only be Frequencies.AsItHappens, but was set to ' + str(freq)) 
+        else:
+            if freq is None:
+                freq = Frequencies.OnceADay
 
         params = [
             None,
             self._create_alert_data(
                 query    = query,
-                source   = source,
+                sources  = sources,
                 delivery = delivery,
                 freq     = freq,
                 vol      = vol,
@@ -406,9 +415,13 @@ class GoogleAlertsManager(object):
             )
         ]
 
-        post_params = { 'params': json.dumps(params) }
+        post_params = urlencode({ 'params': json.dumps(params) })
+
+        print('url: ' + url)
+        print('params: ' + json.dumps(params))
 
         response = self.opener.open(url, post_params)
+        print('response: ' + response.read())
         resp_code = response.getcode()
         if resp_code != 200:
             raise UnexpectedResponseError(resp_code,
@@ -416,20 +429,18 @@ class GoogleAlertsManager(object):
                 response.read(),
                 )
 
-        self._refresh_window_state()
-
     def update(self, alert):
         """
         Updates an existing alert which has been modified.
         """
-        url = 'https://www.' + __GOOGLE_DOMAIN + '/alerts/modify?x=' + self.window_state.x
+        url = 'https://www.' + _GOOGLE_DOMAIN + '/alerts/modify?x=' + self.window_state.x
 
         params = [
             None,
             alert.alert_id,
             self._create_alert_data(
                 query    = alert.query,
-                source   = alert.source,
+                sources  = alert.sources,
                 delivery = alert.delivery,
                 freq     = alert.frequency,
                 vol      = alert.volume,
@@ -438,7 +449,7 @@ class GoogleAlertsManager(object):
             )
         ]
 
-        post_params = { 'params': json.dumps(params) }
+        post_params = urlencode({ 'params': json.dumps(params) })
 
         response = self.opener.open(url, post_params)
         resp_code = response.getcode()
@@ -449,22 +460,20 @@ class GoogleAlertsManager(object):
                 response.read(),
                 )
 
-        self._refresh_window_state()
-
     def delete(self, alert):
         """
         Delete an existing alert.
         """
-        url = 'https://www.' + __GOOGLE_DOMAIN + '/alerts/delete?x=' + self.window_state.x
+        url = 'https://www.' + _GOOGLE_DOMAIN + '/alerts/delete?x=' + self.window_state.x
 
         params = [
             None,
             alert.alert_id
         ]
 
-        post_params = { 'params': json.dumps(params) }
+        post_params = urlencode({ 'params': json.dumps(params) })
 
-        response = self.opener.open(url, post_params)
+        response = self.opener.open(url, data=post_params)
         resp_code = response.getcode()
         if resp_code != 200:
             raise UnexpectedResponseError(
