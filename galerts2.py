@@ -290,7 +290,8 @@ class GoogleAlertsManager(object):
     def _refresh_window_state(self):
         """
         The alerts and other required data for managing alerts are stored as a
-        Javascript array in window.STATE.
+        Javascript array in window.STATE. This function fetches the Google Alerts
+        page and reads the value of window.STATE.
 
         Returns: The parsed value of window.STATE
         """
