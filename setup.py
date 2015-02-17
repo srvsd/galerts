@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-version = '0.2.4dev'
+version = '0.3.0dev'
 try:
     import os
     doc_dir = os.path.join(os.path.dirname(__file__), 'docs')
@@ -35,7 +35,7 @@ setup(
     keywords='google, alerts, google alerts, news',
     url='http://packages.python.org/galerts',
     license='MIT',
-    py_modules=['galerts'],
+    py_modules=['galerts', 'galerts2'],
     zip_safe=True,
     classifiers=[
         "Development Status :: 3 - Alpha",
