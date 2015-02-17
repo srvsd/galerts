@@ -329,8 +329,8 @@ class GAlertsManager(galerts2.GoogleAlertsManager):
         """
         Updates an existing alert which has been modified.
         """
-        alert.new_alert.delivery  = DELIVER_TYPES[alert.deliver]
         alert.new_alert.query     = alert.query
+        alert.new_alert.delivery  = DELIVER_TYPES[alert.deliver]
         alert.new_alert.sources   = [ ALERT_TYPES[alert.type] ] if ALERT_TYPES[alert.type] != Sources.Automatic else None
         alert.new_alert.volume    = ALERT_VOLS[alert.vol]
         alert.new_alert.frequency = ALERT_FREQS[alert.freq]

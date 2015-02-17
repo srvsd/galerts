@@ -58,6 +58,12 @@ class AlertParameter:
         else:
             return None
 
+    def getKnownPermissibleValues(self):
+        """
+        Get the possible values for this parameter
+        """
+        return self.values.keys()
+
 ###############################################################################
 # Parameters for the alerts and their known permissible values. Note that since
 # Google might add new parameter values in the future, there's no strict
@@ -147,12 +153,9 @@ class Alert:
         self.language   = query_info[3][1]
         self.region     = query_info[3][2]
 
-        if source_info is not None:
-            self.sources = source_info
-        else:
-            self.sources = [ Sources.Automatic ]
-            
-        self.volume = volume_info
+        # sources is None for Automatic
+        self.sources = source_info
+        self.volume  = volume_info
 
         # support only one mode of delivery for now, but it looks like Google
         # Alerts can support mutliple of them in the future since there is an
@@ -331,6 +334,10 @@ class GoogleAlertsManager(object):
         """
         Create data for a single alert which is used for API calls
         """
+        if sources is not None:
+            if Sources.Automatic in sources:
+                raise ValueError('List of sources cannot contain Sources.Automatic')
+
         delivery_block = None
         if freq != Frequencies.AsItHappens:
             utcnow = datetime.utcnow()
@@ -417,12 +424,9 @@ class GoogleAlertsManager(object):
 
         post_params = urlencode({ 'params': json.dumps(params) })
 
-        print('url: ' + url)
-        print('params: ' + json.dumps(params))
-
         response = self.opener.open(url, post_params)
-        print('response: ' + response.read())
         resp_code = response.getcode()
+
         if resp_code != 200:
             raise UnexpectedResponseError(resp_code,
                 response.info().headers,
